@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DNA & RNA Sequence Analyzer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Sequence Analyzer</h1>
+        
+        <div class="card input-section" id="drop-zone">
+            <p class="instruction">Type, paste, or drag & drop a .txt/.fasta file here.</p>
+            <textarea id="sequence-input" placeholder="Enter DNA or RNA sequence (e.g., ATGCGT...)"></textarea>
+            
+            <div class="file-upload-wrapper">
+                <input type="file" id="file-input" accept=".txt,.fasta">
+            </div>
+
+            <div id="dna-options" class="hidden form-group">
+                <label>DNA Detected. Select Strand Type:</label>
+                <select id="strand-type">
+                    <option value="non-template">Non-Template (Coding / Sense)</option>
+                    <option value="template">Template (Antisense)</option>
+                </select>
+            </div>
+
+            <button id="analyze-btn">Analyze Sequence</button>
+            <div id="error-msg" class="error hidden"></div>
+        </div>
+
+        <div id="results" class="hidden">
+            <div class="card result-card">
+                <h2>1. Detection</h2>
+                <p class="explanation" id="exp-detection"></p>
+                <div class="data-box" id="data-type"></div>
+            </div>
+
+            <div class="card result-card">
+                <h2>2. Transcription</h2>
+                <p class="explanation" id="exp-transcription"></p>
+                <div class="data-box">
+                    <strong>Input:</strong> <span id="data-input"></span><br>
+                    <strong>mRNA:</strong> <span id="data-mrna"></span>
+                </div>
+            </div>
+
+            <div class="card result-card">
+                <h2>3 & 4. Translation & Polypeptide Chain</h2>
+                <p class="explanation" id="exp-translation"></p>
+                <p class="explanation" id="exp-polypeptide"></p>
+                <div class="codon-grid" id="codon-container"></div>
+                <div class="data-box mt-10">
+                    <strong>Raw Polypeptide Chain:</strong> <span id="data-polypeptide"></span>
+                </div>
+            </div>
+
+            <div class="card result-card">
+                <h2>5. Protein Database Match (UniProt)</h2>
+                <p class="explanation" id="exp-protein"></p>
+                <div class="data-box" id="data-db"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const seqInput = document.getElementById('sequence-input');
+        const fileInput = document.getElementById('file-input');
+        const dropZone = document.getElementById('drop-zone');
+        const dnaOptions = document.getElementById('dna-options');
+        const analyzeBtn = document.getElementById('analyze-btn');
+        const resultsDiv = document.getElementById('results');
+        const errorMsg = document.getElementById('error-msg');
+
+        // Real-time detection for UI toggle
+        seqInput.addEventListener('input', () => {
+            const val = seqInput.value.toUpperCase();
+            if (val.includes('T') && !val.includes('U')) {
+                dnaOptions.classList.remove('hidden');
+            } else {
+                dnaOptions.classList.add('hidden');
+            }
+        });
+
+        // File handling
+        fileInput.addEventListener('change', (e) => loadFile(e.target.files[0]));
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.style.borderColor = '#bb86fc'; });
+        dropZone.addEventListener('dragleave', () => dropZone.style.borderColor = '#333');
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = '#333';
+            if (e.dataTransfer.files.length > 0) loadFile(e.dataTransfer.files[0]);
+        });
+
+        function loadFile(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                seqInput.value = e.target.result;
+                seqInput.dispatchEvent(new Event('input'));
+            };
+            reader.readAsText(file);
+        }
+
+        analyzeBtn.addEventListener('click', async () => {
+            errorMsg.classList.add('hidden');
+            resultsDiv.classList.add('hidden');
+            
+            const sequence = seqInput.value;
+            const strandType = document.getElementById('strand-type').value;
+
+            if (!sequence) return;
+
+            analyzeBtn.textContent = "Analyzing...";
+            
+            try {
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ sequence: sequence, strand_type: strandType })
+                });
+                
+                const data = await response.json();
+                analyzeBtn.textContent = "Analyze Sequence";
+
+                if (data.error) {
+                    errorMsg.textContent = data.error;
+                    errorMsg.classList.remove('hidden');
+                    return;
+                }
+
+                // Populate UI
+                document.getElementById('exp-detection').textContent = data.detection_exp;
+                document.getElementById('data-type').textContent = `Sequence identified as: ${data.type}`;
+
+                document.getElementById('exp-transcription').textContent = data.transcription_exp;
+                document.getElementById('data-input').textContent = data.input_sequence;
+                document.getElementById('data-mrna').textContent = data.mrna;
+
+                document.getElementById('exp-translation').textContent = data.translation_exp;
+                document.getElementById('exp-polypeptide').textContent = data.polypeptide_exp;
+                
+                const codonContainer = document.getElementById('codon-container');
+                codonContainer.innerHTML = '';
+                data.amino_acids.forEach(item => {
+                    codonContainer.innerHTML += `
+                        <div class="codon-box">
+                            <span class="codon-txt">${item.codon}</span>
+                            <span class="aa-txt">${item.abbr} - ${item.name}</span>
+                        </div>
+                    `;
+                });
+
+                document.getElementById('data-polypeptide').textContent = data.polypeptide;
+
+                document.getElementById('exp-protein').textContent = data.protein_exp;
+                const dbBox = document.getElementById('data-db');
+                if (data.db_result.error) {
+                    dbBox.innerHTML = `<span style="color:#ff5555">${data.db_result.error}</span>`;
+                } else {
+                    dbBox.innerHTML = `<strong>Protein Name:</strong> ${data.db_result.name}<br><strong>Organism:</strong> ${data.db_result.organism}`;
+                }
+
+                resultsDiv.classList.remove('hidden');
+
+            } catch (err) {
+                analyzeBtn.textContent = "Analyze Sequence";
+                errorMsg.textContent = "A server error occurred.";
+                errorMsg.classList.remove('hidden');
+            }
+        });
+    </script>
+</body>
+</html>
